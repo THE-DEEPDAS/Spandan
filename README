@@ -1,0 +1,11 @@
+1) Built two ML models for Gujarat Police smartwatch data, one for physical-state detection (Stress / Physical Activity / Normal) and one for focus monitoring (Focused / Distracted), trained on real duty data from 29 officers (about 100,658 records).
+
+2) Models trained only on synthetic data performed poorly on real officers (30.75% accuracy, 0.58% Stress F1), which confirmed a large simulation-to-real hardware gap.
+
+3) Training directly on real data gave the best physical-state model (Model 1C): 78.59% accuracy and 88.51% Stress F1, on a chronological per-officer test set of 15,113 rows.
+
+4) The focus/distraction model (Model 2C) reached 98.12% accuracy, 97.28% Macro F1 and 100% Distraction Recall.
+
+5) The live dashboard is complete and working. It shows real-time biometrics, extended health metrics, AI health analysis and recommendation messages, and the models are also deployed as a Hugging Face Gradio Space.
+
+6) Initial live validation correctly flagged an intentional vigorous-movement interval, though heart-rate fluctuation needs smoothing and signal gating. The next phase is a one-month real-world deployment followed by error analysis and retraining.
