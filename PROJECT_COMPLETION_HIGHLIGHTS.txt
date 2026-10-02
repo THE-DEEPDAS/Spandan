@@ -1,5 +1,4 @@
-POLICE SMARTWATCH AI PROJECT
-PROJECT COMPLETION HIGHLIGHTS
+Spandan Project Highlights
 ================================
 
 Project purpose
@@ -60,11 +59,3 @@ Result: 98.12% accuracy; 97.28% Macro F1; 95.77% Distracted F1; 100.00% Distract
 Conclusion
 ----------
 The project validates that real smartwatch data is necessary for reliable field performance. The live dashboard is operational and brings together real-time biometrics, AI predictions, extended metrics, and recommendation outputs. The recommended final models are Model 1C for physical-state detection and Model 2C for focus/distraction detection. Both models use compact neural networks suitable for deployment in a Python service, web application, or edge-processing pipeline.
-
-Important limitations
----------------------
-- Labels are silver-standard heuristic labels and should not be presented as medical diagnoses.
-- Physical Activity F1 remains low and requires additional officer-specific data for stronger reliability.
-- The test split contains future observations from the same officers, so unseen-officer generalization has not been fully established.
-- Save and deploy the exact StandardScaler fitted on the real training data together with each model.
-- Model 2B should be described as fine-tuned only after its training code is corrected to load synthetic weights before training.
