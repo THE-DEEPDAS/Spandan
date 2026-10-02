@@ -1,0 +1,70 @@
+POLICE SMARTWATCH AI PROJECT
+PROJECT COMPLETION HIGHLIGHTS
+================================
+
+Project purpose
+---------------
+This project develops machine-learning models for Gujarat Police smartwatch telemetry. The system supports two operational tasks:
+
+1. Physical-state detection: STRESS, PHYSICAL ACTIVITY, or NORMAL.
+2. Focus monitoring: FOCUSED or DISTRACTED.
+
+Dataset and evaluation
+----------------------
+- Real smartwatch duty data from 29 police officers.
+- Approximately 100,658 telemetry records.
+- Chronological per-officer split: 70% train, 15% validation, 15% test.
+- Common physical-state test set: 15,113 rows.
+- Data includes heart rate, SpO2, accelerometer, GPS displacement, altitude, timing, and derived features.
+- Synthetic-only, fine-tuned, and real-data scratch models were compared on the same held-out real test data.
+
+Key findings
+------------
+- Synthetic-only models show a severe simulation-to-real hardware gap.
+- Physical-state synthetic baseline accuracy was only 30.75%; Stress F1 was 0.58%.
+- Fine-tuning on real duty data increased Physical-State Stress F1 to 85.88%.
+- Training directly on real data achieved the best Physical-State result: 78.59% accuracy and 88.51% Stress F1.
+- The distraction model trained on real data achieved 98.12% accuracy, 97.28% Macro F1, and 100.00% Distraction Recall.
+- Real-data calibration is essential because hardware offsets, wrist orientation, telemetry jitter, and real duty behavior differ from simulation.
+
+Completed product and presentation deliverables
+-------------------------------------------------
+- The live dashboard is complete, operational, and working correctly for real-time biometric monitoring.
+- The dashboard provides per-personnel outputs, extended health metrics, AI health analysis, and model prediction views.
+- The LLM visualization and recommendation module is ready for integration with the dashboard.
+- The recommendation layer can generate human-readable Normal and Warning status messages from the AI and health signals.
+- The original workflow supports sensor ingestion, preprocessing, model inference, and appending predictions to the final output CSV.
+- The project includes an ONNX/web-deployment path for browser or web-service integration, in addition to the PyTorch checkpoints.
+- The system combines physical-state monitoring with cognitive focus/distraction monitoring in one operational workflow.
+- A free Hugging Face Gradio deployment package is prepared https://huggingface.co/spaces/TheDeepDas/Spandan
+- The Gradio Space exposes two model actions: predict_physical_state and predict_distraction.
+
+Live validation and reliability learning
+-----------------------------------------
+- Initial live validation correctly identified an intentional vigorous-movement interval as DISTRACTED during a short test session.
+- SpO2 readings were comparatively stable during early validation.
+- Heart-rate readings showed significant fluctuation and can affect live predictions when the signal is unstable.
+- The next reliability improvements are motion debounce, heart-rate smoothing, sensor warmup, recovery windows after movement, valid-reading holds, longer SpO2 windows, signal gating, and timestamp-quality checks.
+- The recommended next phase is approximately one month of continuous real-world deployment data, followed by false-alarm analysis, missed-detection analysis, behavior-trend analysis, and model retraining.
+
+Best models for final deployment
+--------------------------------
+Task 1: Physical-State Detection
+Best model: models/real_scratch_models/model_1c_state_scratch.pt
+Result: 78.59% accuracy; 64.28% Macro F1; 88.51% Stress F1.
+
+Task 2: Focus/Distraction Detection
+Best model: models/real_scratch_models/model_2c_distraction_scratch.pt
+Result: 98.12% accuracy; 97.28% Macro F1; 95.77% Distracted F1; 100.00% Distracted Recall.
+
+Conclusion
+----------
+The project validates that real smartwatch data is necessary for reliable field performance. The live dashboard is operational and brings together real-time biometrics, AI predictions, extended metrics, and recommendation outputs. The recommended final models are Model 1C for physical-state detection and Model 2C for focus/distraction detection. Both models use compact neural networks suitable for deployment in a Python service, web application, or edge-processing pipeline.
+
+Important limitations
+---------------------
+- Labels are silver-standard heuristic labels and should not be presented as medical diagnoses.
+- Physical Activity F1 remains low and requires additional officer-specific data for stronger reliability.
+- The test split contains future observations from the same officers, so unseen-officer generalization has not been fully established.
+- Save and deploy the exact StandardScaler fitted on the real training data together with each model.
+- Model 2B should be described as fine-tuned only after its training code is corrected to load synthetic weights before training.
