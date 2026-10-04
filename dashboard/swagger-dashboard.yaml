@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: Police Health Dashboard API
+  version: 1.0.0
+  description: |
+    Swagger documentation for the Police Health Dashboard.
+
+    This spec includes:
+    1. Current external AI call used by the dashboard (Groq Chat Completions).
+    2. Internal API contract that covers all dashboard capabilities (telemetry, derived metrics, AI insights, status).
+
+    Notes:
+    - Endpoints marked with `x-implementation-status: planned` are documented contracts that should be implemented as Next.js API routes.
+    - Endpoint marked `implemented-external` reflects the currently used API call in the app.
+servers:
+  - url: http://localhost:3000
+    description: Local dashboard backend (planned)
+  - url: https://api.groq.com/openai/v1
+    description: External Groq AI API (implemented)
+tags:
+  - name: Telemetry
+    description: Raw sensor and derived physiological metrics
+  - name: AI Insights
+    description: AI recommendations and anomaly interpretation
+  - name: System
+    description: Runtime service and sync status
+  - name: External
+    description: External API currently called by the dashboard
+paths:
+  /api/telemetry/current:
+    get:
+      tags: [Telemetry]
+      summary: Get latest wearable telemetry point
+      description: Returns the latest raw and derived metric point displayed in the dashboard cards/charts.
+      operationId: getCurrentTelemetry
+      x-implementation-status: planned
+      responses:
+        "200":
+          description: Latest telemetry point
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryPoint"
+              examples:
+                default:
+                  value:
+                    timestamp: "2026-03-20T10:30:00Z"
+                    raw:
+                      heartRate: 86.3
+                      spo2: 98.1
+                      temp: 36.9
+                      accel: { x: -0.12, y: 0.18, z: 9.74 }
+                      gyro: { x: 0.07, y: -0.03, z: 0.11 }
+                    derived:
+                      physicalLoad: 9.75
+                      rotationalStress: 0.14
+                      metabolicStrain: 1.21
+                      stabilityScore: 50.98
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/telemetry/history:
+    get:
+      tags: [Telemetry]
+      summary: Get recent telemetry history
+      description: Returns the rolling history used by all live charts.
+      operationId: getTelemetryHistory
+      x-implementation-status: planned
+      parameters:
+        - name: limit
+          in: query
+          description: Number of most recent points to return.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 30
+      responses:
+        "200":
+          description: Array of telemetry points, oldest to newest
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TelemetryPoint"
+                required: [items]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/ai/recommendation:
+    post:
+      tags: [AI Insights]
+      summary: Generate AI recommendation from latest history window
+      description: |
+        Accepts recent telemetry history and returns the recommendation card data:
+        `status`, `message`, and `recommendation`.
+      operationId: getAiRecommendation
+      x-implementation-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIRecommendationRequest"
+      responses:
+        "200":
+          description: AI recommendation produced successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIRecommendation"
+              examples:
+                normal:
+                  value:
+                    status: normal
+                    message: Vitals are stable and within expected operating envelope.
+                    recommendation: Maintain current activity and continue monitoring.
+                warning:
+                  value:
+                    status: warning
+                    message: Elevated heart rate relative to physical load trend.
+                    recommendation: Reduce activity intensity and recheck in 5 minutes.
+                anomaly:
+                  value:
+                    status: anomaly
+                    message: Combined SpO2 drop and instability spike detected.
+                    recommendation: Trigger field supervisor alert and perform immediate check.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          description: Upstream AI provider error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/system/status:
+    get:
+      tags: [System]
+      summary: Get dashboard system status pills
+      description: Returns statuses used by Watch Sync and AI Analysis indicators.
+      operationId: getSystemStatus
+      x-implementation-status: planned
+      responses:
+        "200":
+          description: Current service states
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /chat/completions:
+    post:
+      tags: [External]
+      summary: Groq chat completions endpoint used for AI analysis
+      description: |
+        External endpoint currently called by the dashboard client.
+        The app sends a system prompt and user prompt and expects JSON output.
+      operationId: groqChatCompletions
+      x-implementation-status: implemented-external
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroqChatCompletionRequest"
+      responses:
+        "200":
+          description: Completion response containing JSON content in message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroqChatCompletionResponse"
+        "401":
+          description: Invalid or missing API key
+        "429":
+          description: Rate limited
+        "500":
+          description: Provider internal error
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+
+  schemas:
+    Vector3:
+      type: object
+      properties:
+        x: { type: number }
+        y: { type: number }
+        z: { type: number }
+      required: [x, y, z]
+
+    RawData:
+      type: object
+      properties:
+        heartRate:
+          type: number
+          minimum: 60
+          maximum: 180
+        spo2:
+          type: number
+          minimum: 85
+          maximum: 100
+        temp:
+          type: number
+          minimum: 36
+          maximum: 40
+        accel:
+          $ref: "#/components/schemas/Vector3"
+        gyro:
+          $ref: "#/components/schemas/Vector3"
+      required: [heartRate, spo2, temp, accel, gyro]
+
+    DerivedMetrics:
+      type: object
+      properties:
+        physicalLoad:
+          type: number
+          description: Resultant acceleration magnitude
+        rotationalStress:
+          type: number
+          description: Resultant gyroscope magnitude
+        metabolicStrain:
+          type: number
+          description: Combined strain index from heart rate and temperature
+        stabilityScore:
+          type: number
+          minimum: 0
+          maximum: 100
+      required:
+        [physicalLoad, rotationalStress, metabolicStrain, stabilityScore]
+
+    TelemetryPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        raw:
+          $ref: "#/components/schemas/RawData"
+        derived:
+          $ref: "#/components/schemas/DerivedMetrics"
+      required: [timestamp, raw, derived]
+
+    AIRecommendation:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [normal, warning, anomaly]
+        message:
+          type: string
+        recommendation:
+          type: string
+      required: [status, message, recommendation]
+
+    AIRecommendationRequest:
+      type: object
+      properties:
+        history:
+          type: array
+          minItems: 5
+          items:
+            $ref: "#/components/schemas/TelemetryPoint"
+      required: [history]
+
+    SystemStatus:
+      type: object
+      properties:
+        watchSync:
+          type: string
+          enum: [active, loading, offline]
+        aiAnalysis:
+          type: string
+          enum: [active, loading, offline]
+        updatedAt:
+          type: string
+          format: date-time
+      required: [watchSync, aiAnalysis, updatedAt]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+      required: [error]
+
+    GroqChatCompletionRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          example: llama-3.1-8b-instant
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [system, user, assistant]
+              content:
+                type: string
+            required: [role, content]
+        response_format:
+          type: object
+          properties:
+            type:
+              type: string
+              example: json_object
+          required: [type]
+        temperature:
+          type: number
+      required: [model, messages]
+
+    GroqChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+                required: [role, content]
+            required: [index, message]
+      required: [choices]
+
+  responses:
+    BadRequest:
+      description: Invalid request payload or query parameter
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            invalid:
+              value:
+                error: Bad Request
+                details: Invalid request parameter.
+
+    InternalServerError:
+      description: Unexpected server-side error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            default:
+              value:
+                error: Internal Server Error
+                details: An unexpected error occurred.
