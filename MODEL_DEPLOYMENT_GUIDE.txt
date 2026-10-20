@@ -1,0 +1,255 @@
+POLICE SMARTWATCH AI
+FREE HUGGING FACE GRADIO DEPLOYMENT GUIDE
+==========================================
+
+The deployable package is in the hanji folder. It contains one free Hugging Face Gradio Space with two model actions:
+
+1. predict_physical_state: Model 1C physical-state detection.
+2. predict_distraction: Model 2C focus/distraction detection.
+
+BEST MODELS
+===========
+
+Physical-state model:
+hanji/best_models/model_1c_state_scratch.pt
+
+Task: classify one telemetry row as:
+0 = STRESS
+1 = PHYSICAL ACTIVITY
+2 = NORMAL
+
+Recorded result: 78.59% accuracy, 64.28% Macro F1, 88.51% Stress F1.
+
+Focus/distraction model:
+hanji/best_models/model_2c_distraction_scratch.pt
+
+Task: classify one 60-sample telemetry window as:
+0 = FOCUSED
+1 = DISTRACTED
+
+Recorded result: 98.12% accuracy, 97.28% Macro F1, 95.77% Distracted F1, 100.00% Distracted Recall.
+
+SPACE FILES
+===========
+
+Upload the contents of hanji to the root of the Hugging Face Space:
+
+app.py
+requirements.txt
+best_models/model_1c_state_scratch.pt
+best_models/model_2c_distraction_scratch.pt
+artifacts/physical_scaler.joblib
+artifacts/distraction_scaler.joblib
+
+Do not upload the full training datasets to the public Space. The models and scaler artifacts are sufficient for inference.
+
+CREATE THE FREE SPACE
+=====================
+
+1. Sign in at https://huggingface.co/.
+2. Select New Space.
+3. Choose a Space name, such as spandan-smartwatch-inference.
+4. Select Gradio as the Space SDK.
+5. Select the free CPU hardware option.
+6. Create the Space.
+7. Upload app.py, requirements.txt, best_models, and artifacts from hanji.
+8. Wait for dependency installation and the Space build to finish.
+
+The Space URL will be:
+
+https://huggingface.co/spaces/<SPACE_OWNER>/<SPACE_NAME>
+
+The interface contains two tabs. Gradio also exposes the named API actions through its View API area.
+
+GIT DEPLOYMENT OPTION
+=====================
+
+From a terminal opened in the project folder:
+
+cd hanji
+git init
+git add app.py requirements.txt best_models artifacts
+git commit -m "Add Spandan Gradio inference Space"
+git branch -M main
+git remote add origin https://huggingface.co/spaces/<SPACE_OWNER>/<SPACE_NAME>
+git push origin main
+
+Do not commit private access tokens.
+
+MODEL 1 INPUT: PHYSICAL STATE
+==============================
+
+The physical-state action accepts one telemetry row with these 13 values:
+
+1. heart_rate
+2. spo2
+3. skin_temperature
+4. accel_x
+5. accel_y
+6. accel_z
+7. gyro_x
+8. gyro_y
+9. gyro_z
+10. lat_delta
+11. lon_delta
+12. altitude
+13. time_delta
+
+The API applies physical_scaler.joblib before running Model 1C.
+
+Gradio API call:
+
+from gradio_client import Client
+
+client = Client("<SPACE_OWNER>/<SPACE_NAME>")
+result = client.predict(
+    105.0, 97.0, 36.8, 0.0, 0.0, 9.81,
+    0.0, 0.0, 0.0, 0.0, 0.0, 24.0, 30.0,
+    api_name="/predict_physical_state"
+)
+print(result)
+
+Example output:
+
+{
+  "model": "model_1c_state_scratch",
+  "task": "physical_state",
+  "class_id": 0,
+  "state": "STRESS",
+  "probability": 0.91,
+  "probabilities": {
+    "STRESS": 0.91,
+    "PHYSICAL ACTIVITY": 0.04,
+    "NORMAL": 0.05
+  },
+  "alert": true
+}
+
+MODEL 2 INPUT: FOCUS/DISTRACTION
+================================
+
+The distraction action requires exactly 60 ordered samples from the same officer. Each sample must contain:
+
+heart_rate
+accel_x
+accel_y
+accel_z
+gyro_x
+gyro_y
+gyro_z
+lat_delta
+lon_delta
+time_delta
+
+The action computes these seven features:
+
+1. motion_variance
+2. gyro_variance
+3. movement_entropy
+4. micro_motion
+5. hr_variance
+6. hr_slope
+7. speed
+
+It then applies distraction_scaler.joblib before running Model 2C.
+
+Request format:
+
+{
+  "samples": [
+    {
+      "heart_rate": 80.0,
+      "accel_x": 0.0,
+      "accel_y": 0.0,
+      "accel_z": 9.81,
+      "gyro_x": 0.0,
+      "gyro_y": 0.0,
+      "gyro_z": 0.0,
+      "lat_delta": 0.0,
+      "lon_delta": 0.0,
+      "time_delta": 30.0
+    }
+  ]
+}
+
+The samples array above is abbreviated. The real request must contain 60 sample objects.
+
+Gradio API test:
+
+import json
+from gradio_client import Client
+
+client = Client("<SPACE_OWNER>/<SPACE_NAME>")
+samples = []
+for index in range(60):
+    samples.append({
+        "heart_rate": 80.0,
+        "accel_x": 0.0,
+        "accel_y": 0.0,
+        "accel_z": 9.81,
+        "gyro_x": 0.0,
+        "gyro_y": 0.0,
+        "gyro_z": 0.0,
+        "lat_delta": 0.0,
+        "lon_delta": 0.0,
+        "time_delta": 30.0
+    })
+result = client.predict(
+    json.dumps({"samples": samples}),
+    api_name="/predict_distraction"
+)
+print(result)
+
+Example output:
+
+{
+  "model": "model_2c_distraction_scratch",
+  "task": "focus_distraction",
+  "class_id": 1,
+  "state": "DISTRACTED",
+  "probability": 0.96,
+  "alert": true,
+  "window_size": 60
+}
+
+TEST THROUGH THE SPACE UI
+=========================
+
+1. Open the Space URL.
+2. Open the Physical state tab.
+3. Enter the 13 values and select Run physical-state model.
+4. Check the returned state, probability, class probabilities, and alert.
+5. Open the Focus and distraction tab.
+6. Paste JSON containing 60 samples.
+7. Select Run distraction model.
+8. Check the returned FOCUSED or DISTRACTED result and probability.
+
+LOCAL TEST
+==========
+
+Use the configured conda environment named torch_env:
+
+C:/Users/HP/miniconda3/envs/torch_env/python.exe app.py
+
+The local Gradio UI normally opens at http://127.0.0.1:7860. Test both tabs before uploading hanji.
+
+INSTALL THE CLIENT
+==================
+
+pip install gradio_client
+
+The exact action names can be confirmed from the Space View API page:
+
+/predict_physical_state
+/predict_distraction
+
+VALIDATION AND ERRORS
+=====================
+
+- The physical-state action accepts one row.
+- The distraction action rejects any request that does not contain exactly 60 samples.
+- Missing sample fields are rejected.
+- Non-finite values are rejected.
+- A startup error usually means a checkpoint or scaler was uploaded with the wrong filename.
+- Model output is an operational classification signal, not a medical diagnosis.
+- Physical Activity performance is limited and should be treated carefully.

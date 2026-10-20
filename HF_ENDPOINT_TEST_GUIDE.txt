@@ -1,0 +1,166 @@
+SPANDAN HUGGING FACE LIVE ENDPOINT TEST GUIDE
+===============================================
+
+Live Space
+----------
+https://huggingface.co/spaces/TheDeepDas/Spandan
+
+Live inference host
+-------------------
+https://thedeepdas-spandan.hf.space
+
+The Space is Gradio-based and exposes these two named inference endpoints:
+
+1. predict_physical_state
+2. predict_distraction
+
+The Gradio HTTP API uses a two-step request:
+
+1. POST input data to /gradio_api/call/<endpoint_name>.
+2. Read the returned event_id from the response.
+3. GET /gradio_api/call/<endpoint_name>/<event_id>.
+4. Read the final event: complete.
+
+Endpoint 1: Physical State
+===========================
+
+Endpoint name:
+/predict_physical_state
+
+Input: one telemetry row with 13 values in this order:
+
+1. heart_rate
+2. spo2
+3. skin_temperature
+4. accel_x
+5. accel_y
+6. accel_z
+7. gyro_x
+8. gyro_y
+9. gyro_z
+10. lat_delta
+11. lon_delta
+12. altitude
+13. time_delta
+
+Class output:
+
+0 = STRESS
+1 = PHYSICAL ACTIVITY
+2 = NORMAL
+
+Windows CMD test:
+
+curl -X POST "https://thedeepdas-spandan.hf.space/gradio_api/call/predict_physical_state" -H "Content-Type: application/json" -d "{\"data\":[105,97,36.8,0,0,9.81,0,0,0,0,0,24,30]}"
+
+The response contains an event_id, for example:
+
+{"event_id":"YOUR_EVENT_ID"}
+
+Then replace YOUR_EVENT_ID and run:
+
+curl "https://thedeepdas-spandan.hf.space/gradio_api/call/predict_physical_state/YOUR_EVENT_ID"
+
+Expected final response format:
+
+event: complete
+data: [{"model":"model_1c_state_scratch","task":"physical_state","class_id":1,"state":"PHYSICAL ACTIVITY","probability":0.58,"probabilities":{"STRESS":0.17,"PHYSICAL ACTIVITY":0.58,"NORMAL":0.25},"alert":false}]
+
+Endpoint 2: Focus and Distraction
+==================================
+
+Endpoint name:
+/predict_distraction
+
+Input: one JSON string containing exactly 60 ordered samples from the same officer.
+
+Each sample must contain:
+
+heart_rate
+accel_x
+accel_y
+accel_z
+gyro_x
+gyro_y
+gyro_z
+lat_delta
+lon_delta
+time_delta
+
+Class output:
+
+0 = FOCUSED
+1 = DISTRACTED
+
+Python live test for both endpoints
+-------------------------------------
+
+Install requests if required:
+
+C:/Users/HP/miniconda3/envs/torch_env/python.exe -m pip install requests
+
+Run this script from the project folder:
+
+import json
+import requests
+
+BASE = "https://thedeepdas-spandan.hf.space"
+
+
+def call_gradio(endpoint, data):
+    submit = requests.post(
+        f"{BASE}/gradio_api/call/{endpoint}",
+        json={"data": data},
+        timeout=60,
+    )
+    submit.raise_for_status()
+    event_id = submit.json()["event_id"]
+    result = requests.get(
+        f"{BASE}/gradio_api/call/{endpoint}/{event_id}",
+        timeout=120,
+    )
+    result.raise_for_status()
+    print(result.text)
+    return result.text
+
+
+physical_row = [
+    105.0, 97.0, 36.8,
+    0.0, 0.0, 9.81,
+    0.0, 0.0, 0.0,
+    0.0, 0.0, 24.0, 30.0,
+]
+call_gradio("predict_physical_state", physical_row)
+
+sample = {
+    "heart_rate": 80.0,
+    "accel_x": 0.0,
+    "accel_y": 0.0,
+    "accel_z": 9.81,
+    "gyro_x": 0.0,
+    "gyro_y": 0.0,
+    "gyro_z": 0.0,
+    "lat_delta": 0.0,
+    "lon_delta": 0.0,
+    "time_delta": 30.0,
+}
+window = [sample for _ in range(60)]
+call_gradio("predict_distraction", [json.dumps({"samples": window})])
+
+Important: the distraction input is sent as one JSON string inside the Gradio data array, not as 60 separate Gradio inputs.
+
+Verified live results
+---------------------
+Both live endpoints were tested successfully:
+
+- predict_physical_state returned HTTP 200 and a Model 1C prediction.
+- predict_distraction returned HTTP 200 and a Model 2C prediction.
+- The live Space returned the expected JSON fields: model, task, class_id, state, probability, alert, and window_size where applicable.
+
+Browser testing
+---------------
+Open the Space UI:
+
+https://huggingface.co/spaces/TheDeepDas/Spandan
+
+Use the Physical state tab for one telemetry row and the Focus and distraction tab for the 60-sample JSON window.
