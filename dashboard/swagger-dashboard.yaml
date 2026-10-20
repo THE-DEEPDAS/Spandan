@@ -20,6 +20,8 @@ servers:
 tags:
   - name: Telemetry
     description: Raw sensor and derived physiological metrics
+  - name: Analytics
+    description: Aggregates over the labelled training split (served by police_health_api.py on port 8000)
   - name: AI Insights
     description: AI recommendations and anomaly interpretation
   - name: System
@@ -142,6 +144,79 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalServerError"
+
+  /api/analytics/overview:
+    get:
+      tags: [Analytics]
+      summary: Fleet-wide analytics for the training split
+      description: |
+        KPIs, physical-state label counts, stress-label drivers, daily and hourly state mix,
+        heart-rate and SpO2 histograms, per-rank and per-officer summaries, and data-quality checks.
+        Computed once from combined_train.csv (TRAIN_DATA_DIR) and cached. Times are IST.
+      operationId: getAnalyticsOverview
+      x-implementation-status: implemented
+      responses:
+        "200":
+          description: Aggregated analytics (see AnalyticsOverview in src/lib/police-health/analytics-api.ts)
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: Training data could not be loaded
+
+  /api/analytics/officers/{badgeId}:
+    get:
+      tags: [Analytics]
+      summary: Analytics for one officer
+      description: |
+        Officer summary, heart-rate/SpO2 timeline (bucketed, with nulls for gaps), daily and hourly
+        state mix, movement profile, stress-label drivers and the most recent readings.
+      operationId: getOfficerAnalytics
+      x-implementation-status: implemented
+      parameters:
+        - name: badgeId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: SO-0101
+      responses:
+        "200":
+          description: Officer analytics (see OfficerDetail in src/lib/police-health/analytics-api.ts)
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: No training data for this badge ID
+
+  /api/analytics/officers/{badgeId}/assessment:
+    post:
+      tags: [AI Insights]
+      summary: AI assessment of one officer's aggregated profile
+      description: Sends the officer's aggregated figures (not raw readings) to Groq and returns a recommendation card.
+      operationId: getOfficerAssessment
+      x-implementation-status: implemented
+      parameters:
+        - name: badgeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: AI assessment produced successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIRecommendation"
+        "404":
+          description: No training data for this badge ID
+        "502":
+          description: Upstream AI provider error
+        "503":
+          description: GROQ_API_KEY is not configured
 
   /api/system/status:
     get:

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { themeInitScript } from "../components/PoliceHealth/theme";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Personnel Health Grid | AI-Enhanced Police Monitoring",
-  description: "Real-time health monitoring and AI insights for police personnel.",
+  title: "Police Personnel Health Analytics",
+  description: "Analytics over labelled Spandan smartwatch telemetry from on-duty police personnel.",
 };
 
 export default function RootLayout({
@@ -23,7 +24,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // The theme script may set data-theme before React hydrates.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Standalone API service for Police Health integrations.
 
 Run:
@@ -11,6 +11,7 @@ This service provides API endpoints that mirror the dashboard logic without UI d
 from __future__ import annotations
 
 import csv
+import json
 import glob
 import math
 import os
@@ -22,7 +23,10 @@ from typing import List, Literal, Optional
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from police_analytics import TrainingAnalytics
 
 load_dotenv()
 
@@ -34,7 +38,7 @@ load_dotenv()
 class CSVDataLoader:
     """Loads and manages real-time CSV data from police personnel files."""
     
-    def __init__(self, csv_dir: str = "./police-personnel-data-realtime"):
+    def __init__(self, csv_dir: str):
         self.csv_dir = csv_dir
         self.all_rows: List[dict] = []
         self.current_index = 0
@@ -43,41 +47,25 @@ class CSVDataLoader:
     
     def _load_csv_data(self):
         """Load all CSV files from the directory."""
-        csv_files = glob.glob(os.path.join(self.csv_dir, "*.csv"))
-        
+        csv_files = sorted(glob.glob(os.path.join(self.csv_dir, "*.csv")))
+
         if not csv_files:
             print(f"Warning: No CSV files found in {self.csv_dir}")
             return
-        
+
+        # combined_train.csv contains the complete training set. Prefer it when
+        # present so the same rows are not loaded again from the per-officer files.
+        combined_file = next(
+            (path for path in csv_files if os.path.basename(path).lower() == "combined_train.csv"),
+            None,
+        )
+        if combined_file:
+            csv_files = [combined_file]
+
         for csv_file in csv_files:
             try:
                 with open(csv_file, 'r', encoding='utf-8') as f:
-                    # Skip header section until we find the actual data header
-                    # The data header line starts with "App_Date"
-                    line = f.readline()
-                    while line and not line.startswith("App_Date"):
-                        line = f.readline()
-                    
-                    if not line:
-                        print(f"Warning: Could not find data header in {os.path.basename(csv_file)}")
-                        continue
-                    
-                    # Now read the CSV data starting from the actual header
-                    # Reset to read the header and data
-                    f.seek(0)
-                    content = f.read()
-                    # Find the position of "App_Date"
-                    start_pos = content.find("App_Date")
-                    if start_pos == -1:
-                        print(f"Warning: No data found in {os.path.basename(csv_file)}")
-                        continue
-                    
-                    # Get the data portion starting from "App_Date"
-                    data_content = content[start_pos:]
-                    data_lines = data_content.split('\n')
-                    
-                    # Parse with csv.DictReader
-                    reader = csv.DictReader(data_lines)
+                    reader = csv.DictReader(f)
                     rows = list(reader)
                     self.all_rows.extend(rows)
                     print(f"Loaded {len(rows)} rows from {os.path.basename(csv_file)}")
@@ -100,8 +88,22 @@ class CSVDataLoader:
         return len(self.all_rows) > 0
 
 
-# Initialize the CSV data loader
-csv_loader = CSVDataLoader(csv_dir="../police-personnel-data-realtime")
+# Initialize from the requested train dataset, with the existing realtime
+# directory retained as a fallback for older local setups.
+project_root = Path(__file__).resolve().parents[2]
+# TRAIN_DATA_DIR wins; otherwise use data/train beside dashboard/ (Spandan repo
+# layout), then the standalone 18_09_26 checkout.
+default_train_dirs = [
+    Path(__file__).resolve().parents[1] / "data" / "train",
+    project_root / "18_09_26" / "18_09_26" / "data" / "train",
+]
+train_dir = Path(
+    os.getenv("TRAIN_DATA_DIR")
+    or next((path for path in default_train_dirs if path.is_dir()), default_train_dirs[-1])
+)
+legacy_dir = project_root / "api dashboard" / "police-personnel-data-realtime"
+csv_loader = CSVDataLoader(str(train_dir if train_dir.is_dir() else legacy_dir))
+analytics = TrainingAnalytics(train_dir)
 
 
 class Vector3(BaseModel):
@@ -118,6 +120,13 @@ class RawData(BaseModel):
     gyro: Vector3
 
 
+class OfficerMetadata(BaseModel):
+    name: str
+    id: str
+    rank: Optional[str] = None
+    userId: Optional[str] = None
+
+
 class DerivedMetrics(BaseModel):
     physicalLoad: float
     rotationalStress: float
@@ -129,6 +138,7 @@ class TelemetryPoint(BaseModel):
     timestamp: datetime
     raw: RawData
     derived: DerivedMetrics
+    officer: Optional[OfficerMetadata] = None
 
 
 class AIRecommendation(BaseModel):
@@ -174,26 +184,25 @@ def _drift(value: float, value_range: float) -> float:
 
 
 def _generate_raw_data_from_csv() -> RawData:
-    """Generate raw data from CSV source or fallback to random."""
+    """Read the next telemetry point from the configured train dataset."""
     if not csv_loader.has_data():
-        # Fallback to random generation if no CSV data
-        return _generate_random_raw_data()
+        raise RuntimeError(f"No telemetry CSV data loaded from {csv_loader.csv_dir}")
     
     row = csv_loader.get_next_row()
     if not row:
-        return _generate_random_raw_data()
+        raise RuntimeError("Telemetry dataset is empty")
     
     try:
         # Extract values from CSV with proper type conversion and fallback
-        heart_rate = float(row.get('HeartRate', 75))
-        spo2 = float(row.get('SpO2', 98.5))
-        temp = float(row.get('Temperature', 36.8))
-        acc_x = float(row.get('Acc_X', 0))
-        acc_y = float(row.get('Acc_Y', 0))
-        acc_z = float(row.get('Acc_Z', 0))
-        gyro_x = float(row.get('Gyro_X', 0))
-        gyro_y = float(row.get('Gyro_Y', 0))
-        gyro_z = float(row.get('Gyro_Z', 0))
+        heart_rate = float(row.get('heart_rate') or row.get('pulse') or row.get('HeartRate') or 75)
+        spo2 = float(row.get('spo2') or row.get('SpO2') or 98.5)
+        temp = float(row.get('temperature') or row.get('skin_temperature') or row.get('Temperature') or 36.8)
+        acc_x = float(row.get('accel_x') or row.get('Acc_X') or 0)
+        acc_y = float(row.get('accel_y') or row.get('Acc_Y') or 0)
+        acc_z = float(row.get('accel_z') or row.get('Acc_Z') or 0)
+        gyro_x = float(row.get('gyro_x') or row.get('Gyro_X') or 0)
+        gyro_y = float(row.get('gyro_y') or row.get('Gyro_Y') or 0)
+        gyro_z = float(row.get('gyro_z') or row.get('Gyro_Z') or 0)
         
         # Ensure values are within valid ranges
         heart_rate = max(60, min(180, heart_rate))
@@ -216,8 +225,19 @@ def _generate_raw_data_from_csv() -> RawData:
             ),
         )
     except (ValueError, TypeError, KeyError) as e:
-        print(f"Error parsing CSV row: {e}, falling back to random data")
-        return _generate_random_raw_data()
+        raise RuntimeError(f"Invalid telemetry row at index {csv_loader.current_index - 1}: {e}") from e
+
+
+def _get_current_officer() -> Optional[OfficerMetadata]:
+    row = csv_loader.all_rows[(csv_loader.current_index - 1) % len(csv_loader.all_rows)] if csv_loader.all_rows else None
+    if not row:
+        return None
+    return OfficerMetadata(
+        name=row.get("officer_name") or "Unknown officer",
+        id=row.get("badge_id") or "Unknown ID",
+        rank=row.get("rank"),
+        userId=row.get("user_id"),
+    )
 
 
 def _generate_random_raw_data(prev: Optional[RawData] = None) -> RawData:
@@ -265,6 +285,7 @@ def _build_history(limit: int = 30) -> List[TelemetryPoint]:
                 timestamp=datetime.now(timezone.utc),
                 raw=raw,
                 derived=derived,
+                officer=_get_current_officer(),
             )
         )
     return points
@@ -297,10 +318,47 @@ def _get_ai_insights_from_groq(history: List[TelemetryPoint], api_key: str) -> A
         "2. Focus on HR vs load, SpO2 anomalies, and stability issues.\n"
         "3. If normal, clearly state it with trend rationale.\n"
         "4. Return ONLY JSON with fields: status, message, recommendation."
+        " The status value MUST be exactly one of: normal, warning, anomaly."
     )
+    return _request_groq_recommendation(prompt, api_key)
 
+
+def _get_officer_assessment_from_groq(detail: dict, api_key: str) -> AIRecommendation:
+    officer = detail["officer"]
+    context_data = {
+        "rank": officer["rank"],
+        "readings": officer["readings"],
+        "activeDays": officer["activeDays"],
+        "medianHeartRate": officer["medianHeartRate"],
+        "heartRateP5toP95": [detail["stats"]["heartRateP5"], detail["stats"]["heartRateP95"]],
+        "heartRateMeasuredShare": officer["hrMeasuredShare"],
+        "medianSpo2": officer["medianSpo2"],
+        "spo2Below90Share": officer["lowSpo2Share"],
+        "spo2Below85Share": officer["severeSpo2Share"],
+        "physicalStateCounts": officer["states"],
+        "stressLabelDrivers": detail["stressDrivers"],
+        "movement": {bucket["key"]: bucket["count"] for bucket in detail["movement"]},
+    }
+
+    prompt = (
+        "Summarise the on-duty health profile of a police officer from smartwatch telemetry "
+        "aggregated over the training period:\n"
+        f"{json.dumps(context_data)}\n\n"
+        "Rules:\n"
+        "1. Be factual and non-alarmist; base every claim on the numbers given.\n"
+        "2. Stress labels mark stationary readings with heart rate > 90 bpm or SpO2 < 91%. "
+        "Say whether low SpO2 or heart rate drives them, and treat implausibly frequent low SpO2 "
+        "as a possible sensor-fit issue rather than a diagnosis.\n"
+        "3. message: at most two sentences. recommendation: one practical next step.\n"
+        "4. Return ONLY JSON with fields: status, message, recommendation."
+        " The status value MUST be exactly one of: normal, warning, anomaly."
+    )
+    return _request_groq_recommendation(prompt, api_key)
+
+
+def _request_groq_recommendation(prompt: str, api_key: str) -> AIRecommendation:
     payload = {
-        "model": "llama-3.1-8b-instant",
+        "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
         "messages": [
             {
                 "role": "system",
@@ -315,12 +373,13 @@ def _get_ai_insights_from_groq(history: List[TelemetryPoint], api_key: str) -> A
         "temperature": 0.1,
     }
 
+    request_headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=request_headers,
         json=payload,
         timeout=25,
     )
@@ -331,7 +390,17 @@ def _get_ai_insights_from_groq(history: List[TelemetryPoint], api_key: str) -> A
         raise RuntimeError(result["error"].get("message", "Unknown Groq API error"))
 
     content = result["choices"][0]["message"]["content"]
-    recommendation = AIRecommendation.model_validate_json(content)
+    parsed = json.loads(content)
+    status = str(parsed.get("status", "")).lower()
+    if status not in {"normal", "warning", "anomaly"}:
+        if "anomal" in status:
+            status = "anomaly"
+        elif "concern" in status or "warn" in status:
+            status = "warning"
+        else:
+            status = "normal"
+    parsed["status"] = status
+    recommendation = AIRecommendation.model_validate(parsed)
     return recommendation
 
 
@@ -340,19 +409,38 @@ app = FastAPI(
     description="Integration-first API for telemetry and AI recommendations.",
     version="1.0.0",
 )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/telemetry/current", response_model=TelemetryPoint, tags=["Telemetry"])
 def get_telemetry_current() -> TelemetryPoint:
-    raw = _generate_raw_data_from_csv() if csv_loader.has_data() else _generate_random_raw_data()
+    if not csv_loader.has_data():
+        raise HTTPException(status_code=503, detail=f"No train telemetry data loaded from {csv_loader.csv_dir}")
+    raw = _generate_raw_data_from_csv()
     derived = _calculate_derived_metrics(raw)
-    return TelemetryPoint(timestamp=datetime.now(timezone.utc), raw=raw, derived=derived)
+    return TelemetryPoint(
+        timestamp=datetime.now(timezone.utc),
+        raw=raw,
+        derived=derived,
+        officer=_get_current_officer(),
+    )
 
 
 @app.get("/api/telemetry/history", response_model=TelemetryHistoryResponse, tags=["Telemetry"])
 def get_telemetry_history(
     limit: int = Query(30, ge=1, le=500, description="Number of latest points to return."),
 ) -> TelemetryHistoryResponse:
+    if not csv_loader.has_data():
+        raise HTTPException(status_code=503, detail=f"No train telemetry data loaded from {csv_loader.csv_dir}")
     return TelemetryHistoryResponse(items=_build_history(limit=limit))
 
 
@@ -360,14 +448,14 @@ def get_telemetry_history(
 def post_ai_recommendation(payload: AIRecommendationRequest) -> AIRecommendation:
     api_key = os.getenv("GROQ_API_KEY") or os.getenv("NEXT_PUBLIC_GROQ_API_KEY")
     if not api_key:
-        return _default_ai_recommendation()
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured on the backend")
 
     try:
         return _get_ai_insights_from_groq(payload.history, api_key)
     except requests.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Upstream AI provider error: {exc}") from exc
-    except Exception:
-        return _default_ai_recommendation()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI provider error: {exc}") from exc
 
 
 @app.get("/api/system/status", response_model=SystemStatus, tags=["System"])
@@ -387,8 +475,48 @@ def get_csv_status() -> dict:
         "hasData": csv_loader.has_data(),
         "totalRows": len(csv_loader.all_rows),
         "currentIndex": csv_loader.current_index,
-        "dataSource": "real-time CSV" if csv_loader.has_data() else "random fallback"
+        "dataSource": csv_loader.csv_dir if csv_loader.has_data() else "random fallback",
+        "fileCount": len(glob.glob(os.path.join(csv_loader.csv_dir, "*.csv"))),
     }
+
+
+def _analytics_overview() -> dict:
+    try:
+        return analytics.overview()
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"Training data unavailable in {analytics.data_dir}: {exc}") from exc
+
+
+@app.get("/api/analytics/overview", tags=["Analytics"])
+def get_analytics_overview() -> dict:
+    """Fleet-wide aggregates, officer summaries and data-quality checks for the training split."""
+    return _analytics_overview()
+
+
+@app.get("/api/analytics/officers/{badge_id}", tags=["Analytics"])
+def get_officer_analytics(badge_id: str) -> dict:
+    """Timeline, daily/hourly state mix, movement and recent readings for one officer."""
+    _analytics_overview()
+    detail = analytics.officer_detail(badge_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"No training data for officer {badge_id}")
+    return detail
+
+
+@app.post("/api/analytics/officers/{badge_id}/assessment", response_model=AIRecommendation, tags=["AI Insights"])
+def post_officer_assessment(badge_id: str) -> AIRecommendation:
+    """AI summary of one officer's aggregated health profile."""
+    detail = get_officer_analytics(badge_id)
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("NEXT_PUBLIC_GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured on the backend")
+
+    try:
+        return _get_officer_assessment_from_groq(detail, api_key)
+    except requests.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Upstream AI provider error: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI provider error: {exc}") from exc
 
 
 @app.get("/health", tags=["System"])
