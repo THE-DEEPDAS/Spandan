@@ -16,7 +16,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [1/3] Installing/Updating required packages...
-pip install -q fastapi uvicorn requests python-dotenv
+pip install -q fastapi uvicorn requests python-dotenv pandas
 
 if %errorlevel% neq 0 (
     echo ERROR: Failed to install packages
